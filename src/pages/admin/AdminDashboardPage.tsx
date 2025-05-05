@@ -7,24 +7,23 @@ import {
   Box,
   Card,
   CardContent,
-  Stack,
   ToggleButtonGroup,
   ToggleButton,
   Alert,
   Container,
+  SxProps,
 } from "@mui/material";
-import { BarChart } from "@mui/x-charts/BarChart";
-import { PieChart } from "@mui/x-charts/PieChart";
-import { LineChart } from "@mui/x-charts/LineChart";
+import {
+  AnimatedLine,
+  AnimatedLineProps,
+  LineChart,
+} from "@mui/x-charts/LineChart";
 import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
-import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import PeopleIcon from "@mui/icons-material/People";
-import LocalHospitalIcon from "@mui/icons-material/LocalHospital";
 import { useSelector } from "react-redux";
-import { format } from "date-fns";
 import { useNavigate } from "react-router";
-import { ROUTING } from "../../constants/routing";
 import { getDashboard } from "../../services/appointment/dashboard_service";
+import { useChartId, useDrawingArea, useXScale } from "@mui/x-charts";
 
 interface DashboardVisualize {
   salaries: {
@@ -32,6 +31,9 @@ interface DashboardVisualize {
     year: Record<string, number>;
     quarter: Record<string, number>;
   };
+  // 3 năm tiếp theo (tính từ năm hiện tại)
+  // Dữ liệu dự đoán doanh thu cho 3 năm tiếp theo
+  salaries_prediction: Array<number>;
   patients: {
     month: Record<string, number>;
     year: Record<string, number>;
@@ -56,6 +58,11 @@ interface AdminDashboardResponse {
     total_this_year: number;
   };
   visualize: DashboardVisualize;
+}
+// interface để dự đoán doanh thu cho 3 năm tiếp theo
+interface CustomAnimatedLineProps extends AnimatedLineProps {
+  limit?: number;
+  chartData?: string[];
 }
 
 const AdminDashboardPage: React.FC = () => {
@@ -104,11 +111,13 @@ const AdminDashboardPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   // State cho lỗi
   const [error, setError] = useState<string | null>(null);
-  // State cho thông tin so sánh năm trước
+  // State cho thông tin so sánh năm
   const [yearComparison, setYearComparison] = useState({
     revenue: { current: 0, previous: 0 },
     patients: { current: 0, previous: 0 },
   });
+  // State cho dự đoán doanh thu
+  const [salaryPredictions, setSalaryPredictions] = useState<number[]>([]);
 
   // Lấy dữ liệu bảng điều khiển từ API
   useEffect(() => {
@@ -203,6 +212,11 @@ const AdminDashboardPage: React.FC = () => {
         setYearlyRevenue(dashboardData.visualize.salaries.year);
         setYearlyPatients(dashboardData.visualize.patients.year);
 
+        // Lưu dữ liệu dự đoán doanh thu
+        if (dashboardData.visualize.salaries_prediction) {
+          setSalaryPredictions(dashboardData.visualize.salaries_prediction);
+        }
+
         setError(null);
       } catch (err) {
         console.error("Error fetching admin dashboard data:", err);
@@ -242,8 +256,6 @@ const AdminDashboardPage: React.FC = () => {
   // Hàm xử lý khi người dùng nhấp vào điểm trên biểu đồ với kiểm tra dữ liệu đúng đắn
   const handleChartItemClick = (value: string) => {
     if (value !== undefined) {
-      // const period =
-      //   timeView === "quarter" ? `Q${dataIndex + 1}` : `${dataIndex + 1}`;
       console.log(`Điều hướng đến: /admin/doctor-revenue/${timeView}/${value}`);
       navigate(`/admin/doctor-revenue/${timeView}/${value}`);
     }
@@ -292,14 +304,51 @@ const AdminDashboardPage: React.FC = () => {
           .sort((a, b) => parseInt(a) - parseInt(b))
           .slice(0, 5);
 
+        // Tạo mảng dự đoán cho 3 năm tiếp theo
+        const predictionYears = [];
+        const lastYear =
+          years.length > 0
+            ? parseInt(years[years.length - 1])
+            : new Date().getFullYear();
+
+        for (let i = 1; i <= 3; i++) {
+          predictionYears.push(String(lastYear + i));
+        }
+
+        // Kết hợp dữ liệu thực tế và dự đoán trong cùng một mảng
+        const allYears = [...years, ...predictionYears];
+        const combinedData = [
+          ...years.map((year) => yearlyRevenue[year] || 0),
+          ...Array.from({ length: 3 }, (_, i) => salaryPredictions[i] || 0),
+        ];
+
+        // Mảng để đánh dấu dữ liệu nào là dự đoán
+        const isPrediction = [
+          ...Array(years.length).fill(false),
+          ...Array(predictionYears.length).fill(true),
+        ];
+
+        // For band scale, use the actual years length as the limit
+        // This represents the index of the first prediction year
+        const predictionLimit = years.length;
+
         return {
-          xAxisData: years,
-          seriesData: years.map((year) => yearlyRevenue[year] || 0),
-          title: "Doanh thu theo năm (5 năm gần đây)",
+          xAxisData: allYears,
+          seriesData: combinedData,
+          isPrediction: isPrediction,
+          predictionLimit: predictionLimit,
+          title: "Doanh thu theo năm (năm gần đây + 3 năm dự đoán)",
+          actualYearsCount: years.length,
         };
       }
       default:
-        return { xAxisData: [], seriesData: [], title: "" };
+        return {
+          xAxisData: [],
+          seriesData: [],
+          isPrediction: [],
+          title: "",
+          actualYearsCount: 0,
+        };
     }
   };
 
@@ -359,6 +408,82 @@ const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  // Component tùy chỉnh đường nét được định nghĩa trong component chính
+  // để có thể truy cập dữ liệu revenueChartConfig
+  // liimt là vị trí của đường chia giữa dữ liệu thực tế và dự đoán
+  function CustomAnimatedLine(props: CustomAnimatedLineProps) {
+    const { limit, ...other } = props;
+    const { top, bottom, height, left, width } = useDrawingArea();
+    const chartId = useChartId();
+
+    if (limit === undefined) {
+      return <AnimatedLine {...other} />;
+    }
+
+    // Lấy vị trí phần trăm cho đường chia dựa trên giá trị giới hạn
+    const totalItems = revenueChartConfig.xAxisData.length;
+
+    // Tính toán vị trí đường chia dựa trên chỉ mục giới hạn và tổng số mục
+    const positionRatio = limit / totalItems;
+    const dividerPosition = left + width * positionRatio;
+
+    const clipIdleft = `${chartId}-${props.ownerState.id}-line-limit-${limit}-1`;
+    const clipIdRight = `${chartId}-${props.ownerState.id}-line-limit-${limit}-2`;
+
+    return (
+      <React.Fragment>
+        {/* Thêm đường dọc để đánh dấu rõ ràng điểm bắt đầu dự đoán */}
+        {/* <line
+          x1={dividerPosition}
+          y1={top}
+          x2={dividerPosition}
+          y2={top + height}
+          stroke="#888"
+          strokeWidth={1}
+          strokeDasharray="3,3"
+        /> */}
+
+        {/* Đường cắt cho phần dữ liệu thực tế */}
+        <clipPath id={clipIdleft}>
+          <rect
+            x={left}
+            y={0}
+            width={dividerPosition - left}
+            height={top + height + bottom}
+          />
+        </clipPath>
+
+        {/* Đường cắt cho phần dữ liệu dự đoán */}
+        {/*
+          clip này sẽ cắt phần bên phải của biểu đồ, chỉ hiển thị phần bên trái
+          của biểu đồ với dữ liệu thực tế. Điều này giúp tạo hiệu ứng đường nét đứt
+         */}
+        <clipPath id={clipIdRight}>
+          <rect
+            x={dividerPosition}
+            y={0}
+            width={left + width - dividerPosition}
+            height={top + height + bottom}
+          />
+        </clipPath>
+
+        {/* Hiển thị phần dữ liệu thực tế với đường liền */}
+        <g clipPath={`url(#${clipIdleft})`} className="line-before">
+          <AnimatedLine {...other} />
+        </g>
+
+        {/* Hiển thị phần dữ liệu dự đoán với đường nét đứt */}
+        <g clipPath={`url(#${clipIdRight})`} className="line-after">
+          <AnimatedLine
+            {...other}
+            strokeDasharray="5,5" // Áp dụng đường nét đứt trực tiếp tại đây
+            strokeWidth={3} // Làm đường dự đoán dày hơn một chút
+          />
+        </g>
+      </React.Fragment>
+    );
+  }
+
   // Lấy cấu hình biểu đồ
   const revenueChartConfig = getRevenueChartConfig();
   const patientsChartConfig = getPatientsChartConfig();
@@ -393,7 +518,7 @@ const AdminDashboardPage: React.FC = () => {
       {/* Thẻ tổng kết */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         {/* Thẻ Tổng Doanh Thu */}
-        <Grid item xs={12} sm={6} md={4}>
+        <Grid item xs={12} sm={6} md={6}>
           <Card
             sx={{ height: "100%", bgcolor: "primary.light", color: "white" }}
           >
@@ -415,7 +540,7 @@ const AdminDashboardPage: React.FC = () => {
         </Grid>
 
         {/* Thẻ Tổng Số Bệnh Nhân */}
-        <Grid item xs={12} sm={6} md={4}>
+        <Grid item xs={12} sm={6} md={6}>
           <Card
             sx={{ height: "100%", bgcolor: "success.light", color: "white" }}
           >
@@ -428,26 +553,6 @@ const AdminDashboardPage: React.FC = () => {
               </Box>
               <Typography variant="h3" fontWeight="bold">
                 {formatPatientCount(yearComparison.patients.current)}
-              </Typography>
-              <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
-                Năm {new Date().getFullYear()}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Thẻ Tổng Số Bác Sĩ */}
-        <Grid item xs={12} sm={6} md={4}>
-          <Card sx={{ height: "100%", bgcolor: "info.light", color: "white" }}>
-            <CardContent>
-              <Box display="flex" alignItems="center" mb={1}>
-                <LocalHospitalIcon sx={{ fontSize: 40, mr: 1 }} />
-                <Typography variant="h5" component="div">
-                  Bác Sĩ
-                </Typography>
-              </Box>
-              <Typography variant="h3" fontWeight="bold">
-                {formatPatientCount(totalDoctors)}
               </Typography>
               <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
                 Năm {new Date().getFullYear()}
@@ -490,7 +595,7 @@ const AdminDashboardPage: React.FC = () => {
               <LineChart
                 xAxis={[
                   {
-                    scaleType: "band",
+                    scaleType: "band", // Cần giữ lại để định vị đồ thị chính xác
                     data: revenueChartConfig.xAxisData,
                     tickLabelStyle: { fontSize: 12, fontWeight: 600 },
                   },
@@ -500,9 +605,19 @@ const AdminDashboardPage: React.FC = () => {
                     data: revenueChartConfig.seriesData,
                     label: "Doanh thu (VND)",
                     color: "#2196f3",
-                    highlightScope: {
-                      highlight: "item",
-                    },
+                    // Sử dụng itemProps để tùy chỉnh từng điểm dữ liệu
+                    ...(timeView === "year" && {
+                      valueFormatter: (value, context) => {
+                        if (
+                          context &&
+                          revenueChartConfig.isPrediction &&
+                          revenueChartConfig.isPrediction[context.dataIndex]
+                        ) {
+                          return `${formatCurrency(value)} (Dự đoán)`;
+                        }
+                        return formatCurrency(value);
+                      },
+                    }),
                   },
                 ]}
                 height={320}
@@ -510,40 +625,74 @@ const AdminDashboardPage: React.FC = () => {
                 margin={{ left: 100, right: 20 }}
                 tooltip={{
                   trigger: "item",
-                  valueFormatter: (value) => formatCurrency(value),
+                  valueFormatter: (value) =>
+                    value ? formatCurrency(value) : "Không có dữ liệu",
+                }}
+                slots={{
+                  line: timeView === "year" ? CustomAnimatedLine : undefined,
                 }}
                 slotProps={{
                   legend: { hidden: false },
+                  line:
+                    timeView === "year"
+                      ? { limit: revenueChartConfig.predictionLimit }
+                      : undefined,
                 }}
-                sx={{ cursor: "pointer" }}
-                // Xử lý tất cả các sự kiện nhấp có thể để đảm bảo trải nghiệm người dùng tốt hơn
+                sx={{
+                  cursor: "pointer",
+                }}
+                // Xử lý sự kiện nhấp
                 onAxisClick={(event, d) => {
                   console.log("Nhấp vào trục:", d);
-                  if (d && d.dataIndex !== undefined) {
+                  if (
+                    d &&
+                    d.dataIndex !== undefined &&
+                    timeView === "year" &&
+                    d.dataIndex < revenueChartConfig.actualYearsCount
+                  ) {
+                    handleChartItemClick(d.axisValue);
+                  } else if (
+                    d &&
+                    d.dataIndex !== undefined &&
+                    timeView !== "year"
+                  ) {
                     handleChartItemClick(d.axisValue);
                   }
                 }}
-                // onLineClick={(event, d) => {
-                //   console.log("Nhấp vào đường:", d);
-                //   if (d && d.dataIndex !== undefined) {
-                //     handleChartItemClick(d.dataIndex);
-                //   }
-                // }}
                 onMarkClick={(event, d) => {
                   console.log("Nhấp vào điểm đánh dấu:", d);
-                  if (d && d.dataIndex !== undefined) {
+                  if (
+                    d &&
+                    d.dataIndex !== undefined &&
+                    d.seriesId === "0" && // Chỉ áp dụng cho series thực tế (id 0)
+                    timeView === "year" &&
+                    d.dataIndex < revenueChartConfig.actualYearsCount
+                  ) {
+                    handleChartItemClick(d.axisValue);
+                  } else if (
+                    d &&
+                    d.dataIndex !== undefined &&
+                    d.seriesId === "0" &&
+                    timeView !== "year"
+                  ) {
                     handleChartItemClick(d.axisValue);
                   }
                 }}
-                // onAreaClick={(event, d) => {
-                //   console.log("Nhấp vào vùng:", d);
-                //   if (d && d.dataIndex !== undefined) {
-                //     handleChartItemClick(d.dataIndex);
-                //   }
-                // }}
               />
               <Typography variant="body2" textAlign="center" sx={{ mt: 1 }}>
                 Nhấn vào biểu đồ để xem chi tiết doanh thu theo bác sĩ
+                {/* {timeView === "year" && (
+                  <span
+                    style={{
+                      color: "#ff9800",
+                      fontStyle: "italic",
+                      display: "block",
+                    }}
+                  >
+                    (Dữ liệu dự đoán 3 năm tiếp theo không có chi tiết doanh
+                    thu)
+                  </span>
+                )} */}
               </Typography>
             </Box>
           </Paper>
