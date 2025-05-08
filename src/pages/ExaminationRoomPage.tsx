@@ -285,7 +285,7 @@ export default function ExaminationRoomPage() {
       window.location.protocol +
       "//" +
       // window.location.host +
-      `${import.meta.env.VITE_HOST}` +
+      `healthcare-web-tau.vercel.app` +
       window.location.pathname +
       "?role=patient"
     );
