@@ -285,7 +285,7 @@ export default function ExaminationRoomPage() {
       window.location.protocol +
       "//" +
       // window.location.host +
-      `${import.meta.env.VITE_HOST}:5173` +
+      `${import.meta.env.VITE_HOST}` +
       window.location.pathname +
       "?role=patient"
     );
