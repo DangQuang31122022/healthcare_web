@@ -347,8 +347,9 @@ const DoctorRevenueDetailsPage: React.FC = () => {
           Quay lại
         </Button>
         <Typography variant="h4" fontWeight="bold">
-          Doanh thu theo bác sĩ - {getPeriodTitle()} năm{" "}
-          {new Date().getFullYear()}
+          Doanh thu theo bác sĩ - {getPeriodTitle()}
+          {/* năm{" "}
+          {new Date().getFullYear()} */}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
         <Button
