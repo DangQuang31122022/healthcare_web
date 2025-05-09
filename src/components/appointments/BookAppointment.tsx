@@ -36,7 +36,7 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({
   const [note, setNote] = useState<string>("");
   const [workSchedule, setWorkSchedule] = useState<any>(null);
   const [paymentCompleted, setPaymentCompleted] = useState<boolean>(false);
-
+  console.log("activeStep", activeStep);
   const steps = [
     "Chọn dịch vụ",
     "Chọn bác sĩ",
@@ -82,7 +82,8 @@ const BookAppointment: React.FC<BookAppointmentProps> = ({
 
       await createAppointment(patientId, note, workSchedule.id, paymentContent);
 
-      handleNext();
+      // Ensure we set the active step explicitly to step 4 (Confirmation)
+      setActiveStep(4);
     } catch (err) {
       console.error("Failed to process payment:", err);
       setError("Thanh toán thất bại. Vui lòng thử lại.");
